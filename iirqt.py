@@ -1,5 +1,10 @@
+from __future__ import division
 import sys
 import sip
+import urllib
+
+from PIL import Image
+
 
 sip.setapi('QString', 2)
 sip.setapi('QVariant', 2)
@@ -10,6 +15,7 @@ from twisted.python import log
 
 
 app = QtGui.QApplication(sys.argv)
+
 pyqt4reactor.install()
 
 from twisted.protocols.basic import LineReceiver
@@ -112,10 +118,39 @@ class MainWindow(QtGui.QMainWindow):
     def __init__(self):
         DEBUG = True
         self.chatWindow = None
+        self.bufferDict = None
+        self.coPa = ['#c97cab',
+                     '#fb2e01',
+                     '#6fcb9f',
+                     '#ffe28a',
+                     '#fffeb3',
+                     '#f27d0c']
+
+        self.nickColors = {1: self.coPa[0],
+                           2: self.coPa[1],
+                           3: self.coPa[2],
+                           4: self.coPa[3],
+                           5: self.coPa[4],
+                           6: self.coPa[5],
+                           7: self.coPa[0],
+                           8: self.coPa[1],
+                           9: self.coPa[2],
+                           10: self.coPa[3],
+                           11: self.coPa[4],
+                           12: self.coPa[5],
+                           13: self.coPa[0],
+                           14: self.coPa[1],
+                           15: self.coPa[2],
+                           16: self.coPa[3],
+                           17: self.coPa[4],
+                           18: self.coPa[5],
+                           19: self.coPa[0],
+                           20: self.coPa[1]}
 
         log.startLogging(sys.stdout)
 
         super(MainWindow, self).__init__()
+        self.setWindowIcon(QtGui.QIcon('iirc.png'))
 
         """Set up the window layout"""
 
@@ -164,18 +199,24 @@ class MainWindow(QtGui.QMainWindow):
         self.chatWindow = QtGui.QStackedWidget()
         self.coreList = QtGui.QListWidget()
         self.coreList.addItem('Welcome to IIRC')
+        self.chatWindow.setStyleSheet("""background-color: rgb(50, 50, 50);""")
 
         self.chatWindow.addWidget(self.coreList)
+        black = QtGui.QPalette()
+        # black.setColor(QtGui.QPalette.Text, QtGui.QColor('#FEFEFE'))
+        # black.setColor(QtGui.QPalette.Background, QtGui.QColor('#010101'))
+        # self.chatWindow.setBackground(QtGui.QColor('#000000'))
+        self.chatWindow.setAutoFillBackground(True)
+        # self.chatWindow.setPalette(black)
 
         # Entry text box
         self.entry = QtGui.QLineEdit()
         self.entry.returnPressed.connect(self.handle_line)
 
-        # Add the core buffer as the first chat view
+        # Add the core buffer` as the first chat view
         self.addServerToTree('IIRC-Core', 'corebuffer')
-        # self.bufferDict['IIRC Core'] = {'nick': 'Core Buffer', 'buffer': self.coreList}
+        self.bufferDict['IIRC-Core'] = {'nick': 'Core Buffer', 'buffer': self.coreList}
         self.nickLabel.setText('Core Buffer')
-
 
         chatAndEntry = QtGui.QVBoxLayout()
         chatAndEntry.addWidget(self.chatWindow)
@@ -211,9 +252,8 @@ class MainWindow(QtGui.QMainWindow):
         self.protocol = None
         """End layout setup"""
 
-
         self.entry.insert('/connect irc.freenode.net twstd')
-        # self.IRCConnectServer('irc.freenode.net', 'twstd')
+        # self.IRCConnect0, 0, howServer('irc.freenode.net', 'twstd')
 
         self.relayFactory = RelayFactory(window=self)
         log.msg('relayFactory.window: ', self.relayFactory.window)
@@ -223,7 +263,6 @@ class MainWindow(QtGui.QMainWindow):
         reactor.connectTCP('localhost', 9993, self.relayFactory)
         reactor.run()
 
-
     def connectWindow(self):
         self.cw = connectDialog()
         self.cw.initUI()
@@ -231,23 +270,29 @@ class MainWindow(QtGui.QMainWindow):
     def addServerToTree(self, serverName, nickname):
         newServer = QtGui.QTreeWidgetItem(self.channelTree)
         newServer.setText(0, serverName)
-        list = self.channelTree.selectedItems()
+        # list = self.channelTree.selectedItems()
         # Have to clear the selectness of other items
         self.clearTreeSelections()
 
         # Scroll to new server and select it
         self.channelTree.scrollToItem(newServer)
         self.channelTree.setItemSelected(newServer, True)
+        newServer.setBackground(0, QtGui.QColor('#cef0f2'))
         # newServer.setBackgroundColor(0, QtCore.Qt.red)
 
         identifier = str(serverName)
         # Count always one more than highest index
         index = self.chatWindow.count()
         newBuffer = QtGui.QListWidget()
+        # black = QtGui.QPalette()
+        # black.setColor(QtGui.QPalette.Background, QtGui.QColor('#cef0f2'))
+        # newBuffer.setPalette(black)
         self.bufferDict[identifier] = {'index': index,
                                        'buffer': newBuffer,
                                        'nick': str(nickname),
-                                       'treetab': newServer}
+                                       'treetab': newServer,
+                                       'server': True,
+                                       'bgcolor': '#cef0f2'}
 
         # Create the chat view
         self.chatWindow.addWidget(newBuffer)
@@ -272,7 +317,9 @@ class MainWindow(QtGui.QMainWindow):
         newBuffer = QtGui.QListWidget()
         self.bufferDict[identifier] = {'index': index,
                                        'buffer': newBuffer,
-                                       'treetab': newChannel}
+                                       'treetab': newChannel,
+                                       'server': False,
+                                       'bgcolor': '#FFFFFF'}
         self.chatWindow.addWidget(newBuffer)
 
         # Expand the server tree
@@ -338,16 +385,72 @@ class MainWindow(QtGui.QMainWindow):
         user = arg[2]
         msg = arg[3]
 
-        log.msg('show arguments: {0} {1} {2} {3}'.format(server, channel, user, msg))
-        log.msg('show current buffer: ', self.chatWindow.currentIndex())
+        fullmsg = msg.split(' ')
 
-        identifier = server + channel
+        # Parse for images
+        image = False
+        filename = None
+        for word in fullmsg:
+            if word.startswith('http') and (word.endswith('.jpg') or word.endswith('png')):
+                filename = word.split('/')[-1]
+                urllib.urlretrieve(word, filename)
+                log.msg('downloaded an image: ', word)
+                image = True
+
+        log.msg('show arguments: {0} {1} {2} {3}'.format(server, channel, user, msg))
+        # log.msg('show current buffer: ', self.chatWindow.currentIndex())
+
+        identifier = None
+        if server == channel:
+            identifier = server
+        else:
+            identifier = server + channel
         # index = self.bufferDict[identifier]['index']
         buffer = self.bufferDict[identifier]['buffer']
 
-        line = '<{0}> {1}'.format(user, msg)
+        text = QtGui.QLabel('<{0}> {1}'.format(user, msg))
+        text.setWordWrap(True)
+        color = self.nickColors[len(user)]
+        text.setStyleSheet('color: ' + color)
+        line = QtGui.QListWidgetItem()
+        # line.setForeground(QtGui.QColor('#FFFFFF'))
 
         buffer.addItem(line)
+        buffer.setItemWidget(line, text)
+
+        if image:
+            # Find out the size of the image
+            im = Image.open(filename)
+            imgsize = im.size
+            width = imgsize[0]
+            height = imgsize[1]
+            log.msg('Unadjusted height: ', height, '  width: ', width)
+
+            resize = False
+            if width > 500:
+                ratio = 500.0 / width
+                log.msg('Image adjustment ratio: ', ratio)
+                width = 500
+                height *= ratio
+                size = int(height), int(width)
+                resize = True
+
+            # A new list item
+            line2 = QtGui.QListWidgetItem()
+            pic = QtGui.QPixmap(filename)
+            # A label to wrap the image
+            picLabel = QtGui.QLabel()
+            if resize:
+                picLabel.setPixmap(pic.scaled(width, height, QtCore.Qt.KeepAspectRatio))
+            else:
+                picLabel.setPixmap(pic)
+
+            log.msg('Adjusted height: ', height, '  width: ', width)
+
+            line2.setSizeHint(QtCore.QSize(width, height))
+            buffer.addItem(line2)
+            buffer.setItemWidget(line2, picLabel)
+
         if clear:
             self.entry.clear()
         if bottom:
@@ -369,7 +472,7 @@ class MainWindow(QtGui.QMainWindow):
             return item.parent()
 
     def getSelectedChannel(self, force=None):
-        # TODO: Check to make sure it's actually a channel
+        # TODO: force seems like a bandaid, figure out if it can be done away with
         if force is None:
             item = self.channelTree.selectedItems()[0]
         else:
@@ -414,15 +517,37 @@ class MainWindow(QtGui.QMainWindow):
         server = self.getSelectedServer(force=current)
         channel = self.getSelectedChannel(force=current)
         log.msg('changeView server: ', server.text(0), '  channel: ', channel.text(0))
+        identifier = None
         # A server buffer will have identical server and channel
         if server == channel:
-            buffer = self.bufferDict[str(server.text(0))]['buffer']
+            identifier = str(server.text(0))
         else:
             identifier = str(server.text(0)) + str(channel.text(0))
-            buffer = self.bufferDict[identifier]['buffer']
+
+        log.msg('show identifier: ', identifier)
+
+        buffer = self.bufferDict[identifier]['buffer']
+        nickname = self.bufferDict[str(server.text(0))]['nick']
+        self.nickLabel.setText(nickname)
+
+        log.msg('changeView identifier: ', identifier)
+
         self.chatWindow.setCurrentWidget(buffer)
         current.setBackgroundColor(0, QtGui.QColor('#FFEFD5'))
-        previous.setBackgroundColor(0, QtGui.QColor('#FFFFFF'))
+
+        # Set the previous color
+        server = self.getSelectedServer(force=previous)
+        channel = self.getSelectedChannel(force=previous)
+        log.msg('changeView previous server: ', server.text(0), '  channel: ', channel.text(0))
+        # A server buffer will have identical server and channel
+        if server == channel:
+            identifier = str(server.text(0))
+        else:
+            identifier = str(server.text(0)) + str(channel.text(0))
+
+        previous.setBackgroundColor(0, QtGui.QColor(
+            self.bufferDict[identifier]['bgcolor']
+        ))
 
 
 if __name__ == '__main__':
