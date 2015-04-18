@@ -426,11 +426,13 @@ class MainWindow(QtGui.QMainWindow):
             height = imgsize[1]
             log.msg('Unadjusted height: ', height, '  width: ', width)
 
+            maxWidth = int(self.chatWindow.geometry().width())
+
             resize = False
-            if width > 500:
-                ratio = 500.0 / width
+            if width > maxWidth:
+                ratio = float(maxWidth) / width
                 log.msg('Image adjustment ratio: ', ratio)
-                width = 500
+                width = maxWidth - 40
                 height *= ratio
                 size = int(height), int(width)
                 resize = True
